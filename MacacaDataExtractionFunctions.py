@@ -1,8 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Mar  6 13:57:13 2026
+CSD to EEG conversion. Scripts used to convert CSD to EEG and analyse resulting data.
 
-@author: LukSu
+Copyright (C) 2026 Luk Sullock Enzlin
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 import os
 import numpy as np
@@ -86,7 +99,7 @@ def CheckDataInformation(dfs, monkeyid, date, infochecks):
         ValidationPrint(invalidlist, monkeyid, date)
     return invalidlist
 
-def TrialSelection(dfs, dfname, array, eeg, dataselection):
+def TrialSelection(dfs, dfname, array, eeg, inclusionvector, dataselection):
     removelater = {}
     for key, value in dataselection.items():
         match value:
@@ -119,10 +132,11 @@ def TrialSelection(dfs, dfname, array, eeg, dataselection):
         dfs[dfname] = dfs[dfname].drop(index = indicestoremove)
         dfs[dfname].reset_index(drop = True, inplace = True)
         array = np.delete(array, indicestoremove, axis = 2)
+        inclusionvector[indicestoremove] = False
         eeg = np.delete(eeg, indicestoremove, axis = 2)
-    return dfs, array, eeg
+    return dfs, array, eeg, inclusionvector
 
-def SelectData(df, array, eeg, DataSelection):
+def SelectData(df, array, eeg, inclusionvector, DataSelection):
     print("\t\033[92mSelecting data\033[0m")
     for dfname, selectioncriteria in DataSelection.items():
         match dfname:
@@ -131,8 +145,8 @@ def SelectData(df, array, eeg, DataSelection):
                     if df["SessionInfo"][key][0] not in item:
                         continue
             case "Data":
-                df, array, eeg = TrialSelection(df, dfname, array, eeg, selectioncriteria)
-    return df, array, eeg
+                df, array, eeg, inclusionvector = TrialSelection(df, dfname, array, eeg, inclusionvector, selectioncriteria)
+    return df, array, eeg, inclusionvector
 
 def PlotAverageToPdf(pdfname, exportfolder, data, time, xlimitlower = None, xlimitupper = None, sesmon = "Session"):
     print(f'\t\t\033[96mExporting to: \033[0m{exportfolder}')
@@ -222,15 +236,15 @@ def PlotCSDtoPdf(pdfname, exportfolder, data, time, xlimitlower = None, xlimitup
         pdf.savefig(fig)
         plt.close(fig)
 
-def DataSeparation(dfs, arrays, eegs, tmp_df, tmp_array, tmp_eeg, monkeyid, date,
-                   DataSeparationConditions, MinDataPoints, DegConversion,
-                   SessionAverageSelection, sfreq, catcliptimes, cliptimes):
+def DataSeparation(dfs, arrays, eegs, inclusionvectors, tmp_df, tmp_array, tmp_eeg, tmp_inclusionvector, monkeyid, date,
+                   DataSeparationConditions, MinDataPoints, DegConversion, SessionAverageSelection, sfreq, catcliptimes, cliptimes):
     print("\t\033[92mSeparating Data\033[0m")
     dfs_separated = {}
     array_separated = {}
     eeg_separated = {}
     cliptimes_separated = {}
     excludedsessions = {}
+    inclusion_filtered = np.zeros(tmp_array.shape[2], np.bool)
     cattotalcount = len(DataSeparationConditions.keys())
     catcounter = 0
     leastcattrials = [-1, None]
@@ -286,6 +300,7 @@ def DataSeparation(dfs, arrays, eegs, tmp_df, tmp_array, tmp_eeg, monkeyid, date
         dfs_separated[separationcat].reset_index(drop = True, inplace = True)
         array_separated[separationcat] = tmp_array[:,:,indxrmv]
         eeg_separated[separationcat] = tmp_eeg[:,:,indxrmv]
+        inclusion_filtered[indxrmv] = True
         cliptimes_separated[separationcat] = cliptimes[indxrmv]
         if int(sum(indxrmv)) < leastcattrials[0] or leastcattrials[0] == -1:
             leastcattrials = [int(sum(indxrmv)), separationcat]
@@ -312,9 +327,13 @@ def DataSeparation(dfs, arrays, eegs, tmp_df, tmp_array, tmp_eeg, monkeyid, date
                 arrays[separationcat] = np.nanmean(array_separated[separationcat], axis = 2)
                 eegs[separationcat] = np.nanmean(eeg_separated[separationcat], axis = 2)
                 catcliptimes[separationcat] = cliptimes_separated[separationcat]
+        indices = np.where(tmp_inclusionvector)[0]
+        tmp_inclusionvector[indices[inclusion_filtered]] = True
+        inclusionvectors[f'{monkeyid}{date}'] = tmp_inclusionvector
     else:
         excludedsessions[f'{monkeyid}{date}'] = leastcattrials
-    return dfs, arrays, eegs, catcliptimes
+        inclusionvectors[f'{monkeyid}{date}'] = np.zeros(tmp_inclusionvector.shape, dtype = np.bool)
+    return dfs, arrays, eegs, inclusionvectors, catcliptimes
 
 def ExtractData(ImportFolder, ExportFolder, DFHeaderSelection, DataFile, TimeFile,
                 InfoChecks, DataSelection, BaselineTime, MinDataPoints, DegConversion,
@@ -331,6 +350,7 @@ def ExtractData(ImportFolder, ExportFolder, DFHeaderSelection, DataFile, TimeFil
     probes = {}
     plotssavepdfs = {}
     clippedtimepoints = {}
+    inclusionvectors = {}
     if os.path.exists(ExportFolder):
         confirm = input(f'\n\n\033[91mFolder \033[96m{ExportFolder} \033[91malready exists\033[0m, overwrite? [y/n] ')
         if confirm.upper() != 'Y':
@@ -358,6 +378,7 @@ def ExtractData(ImportFolder, ExportFolder, DFHeaderSelection, DataFile, TimeFil
         # Import folder
         tmp_df = ImportDF(f'{ImportFolder}\\{foldername}', DFHeaderSelection)
         tmp_array = ImportArray(f'{ImportFolder}\\{foldername}\\{DataFile}')
+        tmp_inclusionvector = np.ones(tmp_array.shape[2], dtype = np.bool)
         tmp_time = np.load(f'{ImportFolder}\\{foldername}\\{TimeFile}')[0]
         tmp_eeg = np.load(f'{ImportFolder}\\{foldername}\\{EEGFile}')
         monkeyid = tmp_df["SessionInfo"]["monkey_identifier"][0]
@@ -367,7 +388,7 @@ def ExtractData(ImportFolder, ExportFolder, DFHeaderSelection, DataFile, TimeFil
         # Check data
         CheckDataInformation(tmp_df, monkeyid, date, InfoChecks)
         # Data selection
-        tmp_df, tmp_array, tmp_eeg = SelectData(tmp_df, tmp_array, tmp_eeg, DataSelection)
+        tmp_df, tmp_array, tmp_eeg, tmp_inclusionvector = SelectData(tmp_df, tmp_array, tmp_eeg, tmp_inclusionvector, DataSelection)
         # Clip data
         for indx, reactiontime in enumerate(tmp_df["Data"]["reaction_time_ms"]):
             reactiontimeindx, timearraytime = find_nearest(tmp_time, reactiontime-10) # Everything after the reactiontime - 10ms is to be set to nan
@@ -416,8 +437,9 @@ def ExtractData(ImportFolder, ExportFolder, DFHeaderSelection, DataFile, TimeFil
         plotssavepdfs[monkeyid].append(f'{monkeyid}{date}_baseline_CSD.pdf')
         PlotCSDtoPdf(plotssavepdfs[monkeyid][-1], exportplotfolder_tmp, tmp_array_baseline, tmp_time, xlimitupper = clippedmedian, xlimitlower = baselinetimestart)
         # Separate data into given categories
-        dfs, arrays, eegs, catcliptimes = DataSeparation(dfs, arrays, eegs, tmp_df, tmp_array_baseline, tmp_eeg_baseline, monkeyid, date, DataSeparationConditions, MinDataPoints, DegConversion, SessionAverageSelection,
-                                                  sfreq, catcliptimes, np.array(list(clippedtimepoints[f'{monkeyid}{date}']["Time point in time array"].values())))
+        dfs, arrays, eegs, inclusionvectors, catcliptimes = DataSeparation(dfs, arrays, eegs, inclusionvectors, tmp_df, tmp_array_baseline, tmp_eeg_baseline, tmp_inclusionvector,
+                                                                          monkeyid, date, DataSeparationConditions, MinDataPoints, DegConversion, SessionAverageSelection,
+                                                                          sfreq, catcliptimes, np.array(list(clippedtimepoints[f'{monkeyid}{date}']["Time point in time array"].values())))
     print()
     for cat, catclips in catcliptimes.items():
         catcliptimes[cat] = np.median(catclips)
@@ -492,7 +514,10 @@ def ExtractData(ImportFolder, ExportFolder, DFHeaderSelection, DataFile, TimeFil
     clippedtimepoints.to_csv(f'{ExportFolder}\\ClipTimePoints.csv')
     print("\t\033[92mSaving arrays\033[0m")
     for arrayname, array in arrays.items():
-        np.save(f'{ExportFolder}\\{arrayname}', array, allow_pickle = False)
+        np.save(f'{ExportFolder}\\{arrayname}.csv', array, allow_pickle = False)
+    print("\t\033[92mSaving inclusionvectors\033[0m")
+    inclusion_df = pd.DataFrame(dict([(key, pd.Series(value)) for key, value in inclusionvectors.items()]))
+    inclusion_df.to_csv(f'{ExportFolder}\\inclusionvectors.csv', index = False)
     print("\t\033[92mSaving eegs\033[0m")
     for eegname, eeg in eegs.items():
         np.save(f'{ExportFolder}\\EEG_{eegname}', eeg, allow_pickle = False)

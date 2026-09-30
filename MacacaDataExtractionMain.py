@@ -1,8 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Mar  6 13:31:26 2026
+CSD to EEG conversion. Scripts used to convert CSD to EEG and analyse resulting data.
 
-@author: LukSu
+Copyright (C) 2026 Luk Sullock Enzlin
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 from MacacaDataExtractionFunctions import ExtractData
 
@@ -12,7 +25,7 @@ exitcodemap = {
 
 # ImportFolder = "F:\\transfer_3433643_files_9dcc8245\\V4PoP (Jan 2026 bug fixes)\\C190219-npy"
 ImportFolder = "F:\\transfer_3433643_files_9dcc8245\\V4PoP (Jan 2026 bug fixes)"
-ExportFolder = "F:\\saveddata\\260520-All"
+ExportFolder = "F:\\saveddata\\260930-All"
 DataFile = "csd_array_naPmm3.npy" # Name of the datafile to be imported
 TimeFile = "time_array_ms.npy" # Name of the time file to be imported
 ProbeFile = "probe.csv"
